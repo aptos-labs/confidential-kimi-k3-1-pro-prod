@@ -1,42 +1,62 @@
-# Tinfoil Containers Template
+# Confidential Kimi K3.1 Pro production runtime
 
-A GitHub template repository for deploying a pre-built Docker image as a [Tinfoil Container](https://docs.tinfoil.sh/containers/overview) (in a secure enclave)
+This repository is the public, signed Tinfoil release provenance for the
+production Kimi K3.1 Pro confidential-inference CVM. The CVM runs on an
+8x NVIDIA B300 host with Intel TDX and NVIDIA GPU confidential computing
+(multi-GPU protected PCIe mode, encrypted NVLink).
 
-Out of the box, this template deploys [`tinfoil-containers-hello-world`](https://github.com/tinfoilsh/tinfoil-containers-hello-world): a tiny HTTP server that reads a `MESSAGE` env var and a `GREETING_TOKEN` secret, and responds with both.
+## What is attested
 
-## Deploy It
+`tinfoil-config.yml` is the exact measured runtime exported from the production
+CVM specification. It pins the Kimi K3.1 Pro model reference and MPK, the DSpark
+draft model and its MPK, the vLLM image digest, resource allocation, the
+container environment, and the complete vLLM command line.
 
-1. Click **[Use this template](https://github.com/tinfoilsh/tinfoil-containers-template/generate)** → **Create a new repository**
-2. In the [Tinfoil Dashboard](https://dash.tinfoil.sh), open the **Secrets** tab and add `GREETING_TOKEN` with any value
-3. Release a version by running the **Tinfoil Release** workflow:
-   - **CLI:** `gh workflow run tinfoil-release.yml -f version=v0.0.1`
-   - **UI:** **Actions** tab → **Tinfoil Release** → **Run workflow**, then enter the version
-4. **Containers** → **Deploy**, select your repo and tag, and click **Deploy**
+The vLLM image is Tinfoil's
+[`confidential-kimi-k3-1-pro`](https://github.com/tinfoilsh/confidential-kimi-k3-1-pro)
+v0.0.3 image, pinned by digest. Its environment and flags are Tinfoil's, with two
+additions: vLLM returns `X-Request-Id`, and the model is also served as
+`moonshotai/Kimi-K3.1-Pro`.
 
-Once running, `curl https://<container-name>.<org>.containers.tinfoil.dev` returns:
+The release workflow uses Tinfoil's pinned measurement action to publish a
+Sigstore-signed deployment record and expected TDX measurements. A verifier
+compares those expected measurements with a fresh quote from the live CVM and
+verifies the attested TLS/HPKE key binding.
 
-```
-MESSAGE: <value from tinfoil-config.yml>
-GREETING_TOKEN: <present if secret exists>
-```
+## Release process
 
-## Use your own image
+1. Update the production `cvmctl` spec.
+2. Export its exact measured runtime:
 
-1. If you have a prebuilt image, edit `tinfoil-config.yml` to point at the image you want to deploy: change `image:` to your `<repo>@sha256:<digest>`, adjust `env`/`secrets`/`shim` for your container, then release a new version.
-2. If you have your own code in a private repo, [`tinfoil-containers-hello-world`](https://github.com/tinfoilsh/tinfoil-containers-hello-world) shows the build-and-publish side and can be added to an existing repository.
-3. If you have your own code in a public repo, use the simple [`tinfoil-public-containers-template`](https://github.com/tinfoilsh/tinfoil-public-containers-template) for an all-in-one-repo example. Since the `tinfoil-config.yml` has to be public, public app code can live in the same repo as the config.
+   ```bash
+   cvmctl export-runtime -f vm-kimi-k31-b300-prod.yml > tinfoil-config.yml
+   ```
 
-## Updating
+3. Review and commit the generated `tinfoil-config.yml`.
+4. Run the **Tinfoil Release** workflow with a new immutable tag, for example
+   `v0.0.1`.
+5. Allow the new tag in the attestation collateral service before a guest boots on it.
+6. Deploy that exact production specification, setting its metadata repository
+   and tag to this repository and release.
 
-Edit `tinfoil-config.yml`, commit, then release a new version (`gh workflow run tinfoil-release.yml -f version=v0.0.2`, or via the **Actions** tab). Then click **Update** in the dashboard. Each release creates an auditable record in the Sigstore transparency log.
+Any runtime change, including the model, MPK, image digest, environment or vLLM
+arguments, requires a new release before deployment.
 
-## Documentation
+## Security boundaries
 
-For the full configuration reference, secrets management, debug mode, and more:
+The shim requires authentication on `/v1/chat/completions`, `/v1/completions`,
+`/v1/models`, and `/metrics`. `/health` stays public. It is not proof of
+attestation or of successful authenticated inference.
 
-**[docs.tinfoil.sh/containers](https://docs.tinfoil.sh/containers/overview)**
+The shim checks keys against the backend-only control-plane namespace
+(`control-plane: .../backend/`). That namespace rejects customer keys.
+Customers reach this model through the attested router, which authenticates to
+this CVM with a scoped backend credential.
 
-## Support
+This repository intentionally contains no credentials. The certificate
+authorization token remains only in the protected host-side CVM specification.
 
-- [Documentation](https://docs.tinfoil.sh)
-- [Email Support](mailto:contact@tinfoil.sh)
+The Tinfoil release attestation establishes that the live CVM matches this
+signed runtime configuration. It does not independently establish upstream
+model-weight-to-MPK provenance unless that mapping is separately provided and
+verified by the model packaging process.
